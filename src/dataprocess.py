@@ -54,7 +54,7 @@ def _process_portuguese_corpus():
     logger.info(f"Processing {language} files.")
     (PROCESSED_DATA_PATH / language).mkdir(parents=True, exist_ok=True)
     idx = 0
-    rows = _read_folder_sequentially(RAW_DATA_PATH / language / "data")
+    rows = _read_folder_sequentially(RAW_DATA_PATH / language)
     for content in rows:
         content["dct"] = content.pop("data")
         content["text"] = content.pop("texto").strip()
