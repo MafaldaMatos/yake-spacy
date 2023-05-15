@@ -192,7 +192,7 @@ class SpacyModel:
             # store model that presents the best f1 score on the validation set
             if val_f1 > best_val_f1:
                 logger.debug("Stored weights.")
-                self.save(Path(model_path+ "/" +train_id))
+                self.save(Path(model_path / train_id))
                 best_val_f1 = val_f1
 
         return metrics
@@ -204,5 +204,5 @@ class SpacyModel:
     def save(self, path: Path) -> None:
         """Store model in disk."""
         if not path.is_dir():
-            path.mkdir()
+            path.mkdir(parents=True)
         self.nlp.to_disk(path)

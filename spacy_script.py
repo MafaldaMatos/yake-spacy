@@ -12,6 +12,7 @@ from src.models.spacy import SpacyModel
 from src.dataprocess import process
 from src.utils import split_train_val
 
+import spacy
 
 ROOT = Path(__file__).parent
 ANNOTATED_DATA_PATH = ROOT / "data" / "annotated"
@@ -64,7 +65,7 @@ def weak_labelling(loaders, mode):
             for tup in range(len(startends)):
                 # add the label for fitting
                 temp_list = list(startends[tup])
-                temp_list.append("NOUN")  # what label to use here?
+                temp_list.append("TIMEX")
                 new_list.append(temp_list)
             startendloaders.append(new_list)
             actual_loaders.append(text)
@@ -74,14 +75,18 @@ def weak_labelling(loaders, mode):
         except:
             pass
 
-    with open(ROOT / r'/startendloaders'+mode+'.txt', 'w') as fp:
+    # put to save in the annotated folder
+
+    file_name = 'startendloaders'+mode+'.txt'
+    with open(ROOT / file_name, 'w') as fp:
         for item in startendloaders:
             # write each item on a new line
             fp.write("%s\n" % item)
         print('Done start end values')
 
     loads = {}
-    with open(ROOT / r'/loaders'+mode+'.json', "w") as fp:
+    file_name = 'loaders'+mode+'.json'
+    with open(ROOT / file_name, "w") as fp:
         idx = 0
         for item in actual_loaders:
             # write each item on a new line
@@ -91,7 +96,8 @@ def weak_labelling(loaders, mode):
         print('Done text values')
 
     print(to_save)
-    with open(ROOT / r'/loadersdict'+mode+'.json', "w") as fp:
+    file_name = 'loadersdict'+mode+'.json'
+    with open(ROOT / file_name, "w") as fp:
         json.dump(to_save, fp)
         print("Done json dict")
 
@@ -134,24 +140,74 @@ def annotate():
 
 
 def train():
-
     model = SpacyModel("pt")
     model.load(ROOT / "models/base/spacy/portuguese")
 
     print("done loading model")
 
     train_data = SpacyDataLoader(
-        ANNOTATED_DATA_PATH / r'/loadersdicttrain.json')
+        ANNOTATED_DATA_PATH / r'loadersdicttrain.json')
     eval_data = SpacyDataLoader(
-        ANNOTATED_DATA_PATH / r'/loadersdictvalidation.json')
+        ANNOTATED_DATA_PATH / r'loadersdictvalidation.json')
 
-    val = model.fit(train_data, eval_data, 10, 0.1, ROOT / "models/test")
+    val = model.fit(train_data, eval_data, 10, 0.05, ROOT / "models/test")
     print(val)
 
-    with open(ROOT / r'/fit.json', "w") as fp:
+    with open(ROOT / r'fit.json', "w") as fp:
         json.dump(val, fp)
         print("Done json dict")
 
 
+def load_annotated_data():
+    a1 = ANNOTATED_DATA_PATH / r'loadersdicttrain.json'
+    a2 = ANNOTATED_DATA_PATH / r'loadersdictvalidation.json'
+
+    f1 = open(a1)
+    data1 = json.load(f1)
+
+    textdata1 = []
+    entitiesdata1 = []
+    for datai in data1:
+        textdata1.append(datai[0])
+        entitiesdata1.append(datai[1]["entities"])
+
+    f2 = open(a2)
+    data2 = json.load(f2)
+    
+    textdata2 = []
+    entitiesdata2 = []
+    for datai in data2:
+        textdata2.append(datai[0])
+        entitiesdata2.append(datai[1]["entities"])
+
+    return textdata1, entitiesdata1, textdata2, entitiesdata2
+
+
+def check_annotation():
+    textdata1, entitiesdata1, textdata2, entitiesdata2 = load_annotated_data()
+
+    nlp = spacy.blank("pt")
+
+    for i in range(len(textdata1)):
+        print(spacy.training.offsets_to_biluo_tags(nlp.make_doc(textdata1[i]), entitiesdata1[i]))
+
+    for i in range(len(textdata2)):
+        print(spacy.training.offsets_to_biluo_tags(nlp.make_doc(textdata2[i]), entitiesdata2[i]))
+
+
+def evaluate(model_path):
+    textdata1, entitiesdata1, textdata2, entitiesdata2 = load_annotated_data()
+
+    model = SpacyModel("pt")
+    model.load(ROOT / model_path)
+
+    print(entitiesdata2)
+
+    print(model.evaluate(textdata2, entitiesdata2))
+
+
 if __name__ == "__main__":
+    # annotate()
     train()
+    # check_annotation()
+    # evaluate("models/test/20230511181036")
