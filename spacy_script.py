@@ -1,25 +1,26 @@
-import glob
+import re
 import json
-import os
 from pathlib import Path
+from typing import List
 
+import spacy
 import yake
 from tqdm import tqdm
 
-from highlight import TextHighlighter
 from src.data.spacy import SpacyDataLoader
 from src.models.spacy import SpacyModel
 from src.dataprocess import process
 from src.utils import split_train_val
 
-import spacy
 
 ROOT = Path(__file__).parent
 ANNOTATED_DATA_PATH = ROOT / "data" / "annotated"
 
 
-def eraseOverlapIntervals(intervals):
+def eraseOverlapIntervals(intervals: List[List[int]]):
     intervals.sort()
+    if len(intervals) == 0:
+        return []
 
     validIntervals = []
     validIntervals.append(intervals[0])
@@ -31,75 +32,41 @@ def eraseOverlapIntervals(intervals):
             lastEnd = e
             validIntervals.append(intervals[i])
         else:
-            # Choose the interval that has the shorter end point.
             lastEnd = min(lastEnd, e)
 
     return validIntervals
 
 
 def weak_labelling(loaders, mode):
-    actual_loaders = []
-    startendloaders = []
-    to_save = []
 
-    # does weak labelling
-    count = 0
+    kw_extractor = yake.KeywordExtractor(lan="pt")
+
+    data = []
     for text in tqdm(loaders):
-        # define the text language as portuguese
-        kw_extractor = yake.KeywordExtractor(lan="pt")
+
+        # TODO: check why texts are empty.
+        if not text:
+            continue
+
         keywords = kw_extractor.extract_keywords(text)
+        spans = []
+        for keyword, _ in keywords:
 
-        # if count > 4:
-        # break
-        # print(count+1)
-        # ordered read: 1880? 11276? 12234? 14780? 16248? 20218? 21015? 25725? 35117? 38474?
-        try:
-            th = TextHighlighter(
-                max_ngram_size=3, highlight_pre="", highlight_post="")
-            newtext, startends = th.highlight(text, keywords)
-            new_list = []
-            startends = set(startends)  # remove duplicates
-            startends = list(startends)
-            # removes overlaps, doesnt work for all of them
-            startends = eraseOverlapIntervals(startends)
-            for tup in range(len(startends)):
-                # add the label for fitting
-                temp_list = list(startends[tup])
-                temp_list.append("TIMEX")
-                new_list.append(temp_list)
-            startendloaders.append(new_list)
-            actual_loaders.append(text)
-            to_save.append([text, {"entities": new_list}])
-            count = count + 1
-            pass
-        except:
-            pass
+            matches = re.finditer(keyword, text)
+            for match in matches:
+                start, end = match.span()
+                if text[start:end] != keyword:
+                    print(f"ERROR: {text[start:end]} != {keyword}")
+                else:
+                    spans.append([start, end])
 
-    # put to save in the annotated folder
+        spans = eraseOverlapIntervals(spans)
 
-    file_name = 'startendloaders'+mode+'.txt'
-    with open(ROOT / file_name, 'w') as fp:
-        for item in startendloaders:
-            # write each item on a new line
-            fp.write("%s\n" % item)
-        print('Done start end values')
+        entities = [[s, e, "TIMEX"] for s, e in spans]
+        data.append([text, {"entities": entities}])
 
-    loads = {}
-    file_name = 'loaders'+mode+'.json'
-    with open(ROOT / file_name, "w") as fp:
-        idx = 0
-        for item in actual_loaders:
-            # write each item on a new line
-            loads[idx] = item
-            idx = idx + 1
-        json.dump(loads, fp)
-        print('Done text values')
-
-    print(to_save)
-    file_name = 'loadersdict'+mode+'.json'
-    with open(ROOT / file_name, "w") as fp:
-        json.dump(to_save, fp)
-        print("Done json dict")
+    filepath = ANNOTATED_DATA_PATH / f"{mode}.json"
+    json.dump(data, filepath.open("w"), indent=4)
 
 
 def annotate():
@@ -110,51 +77,51 @@ def annotate():
     loaders, loadersval = [], []
 
     # randomized file read
-    ss = split_train_val(list_of_files)
+    train, valid = split_train_val(list_of_files)
     # ss[0] = train, ss[1] = validation
 
-    for data in ss[0]:
-        # print(data)
-        # Opening JSON file
+    for data in train:
         f = open(data)
-
-        # returns JSON object as
-        # a dictionary
         data = json.load(f)
-        # print(data["text"])
         loaders.append(data["text"])
 
-    for data in ss[1]:
-        # print(data)
-        # Opening JSON file
+    for data in valid:
         f = open(data)
-
-        # returns JSON object as
-        # a dictionary
         data = json.load(f)
-        # print(data["text"])
         loadersval.append(data["text"])
 
-    weak_labelling(loaders, "train")
-    weak_labelling(loadersval, "validation")
+    weak_labelling(loaders[:100], "train")
+    weak_labelling(loadersval[:100], "validation")
 
 
 def train():
     model = SpacyModel("pt")
-    model.load(ROOT / "models/base/spacy/portuguese")
 
     print("done loading model")
+
+    import json
+    train_path = ANNOTATED_DATA_PATH / r'loadersdicttrain.json'
+    content = json.loads(train_path.read_text())
+    for text, annots in content:
+        for s, e, _ in annots["entities"]:
+            print(text[s:e])
 
     train_data = SpacyDataLoader(
         ANNOTATED_DATA_PATH / r'loadersdicttrain.json')
     eval_data = SpacyDataLoader(
         ANNOTATED_DATA_PATH / r'loadersdictvalidation.json')
 
-    val = model.fit(train_data, eval_data, 10, 0.05, ROOT / "models/test")
-    print(val)
+    metrics = model.fit(
+        train_data=train_data,
+        validation_data=eval_data,
+        n_epochs=10,
+        dropout=0.05,
+        model_path=ROOT / "models/test"
+    )
+    print(metrics)
 
     with open(ROOT / r'fit.json', "w") as fp:
-        json.dump(val, fp)
+        json.dump(metrics, fp)
         print("Done json dict")
 
 
@@ -173,7 +140,7 @@ def load_annotated_data():
 
     f2 = open(a2)
     data2 = json.load(f2)
-    
+
     textdata2 = []
     entitiesdata2 = []
     for datai in data2:
@@ -189,10 +156,12 @@ def check_annotation():
     nlp = spacy.blank("pt")
 
     for i in range(len(textdata1)):
-        print(spacy.training.offsets_to_biluo_tags(nlp.make_doc(textdata1[i]), entitiesdata1[i]))
+        print(spacy.training.offsets_to_biluo_tags(
+            nlp.make_doc(textdata1[i]), entitiesdata1[i]))
 
     for i in range(len(textdata2)):
-        print(spacy.training.offsets_to_biluo_tags(nlp.make_doc(textdata2[i]), entitiesdata2[i]))
+        print(spacy.training.offsets_to_biluo_tags(
+            nlp.make_doc(textdata2[i]), entitiesdata2[i]))
 
 
 def evaluate(model_path):
@@ -207,7 +176,7 @@ def evaluate(model_path):
 
 
 if __name__ == "__main__":
-    # annotate()
-    train()
+    annotate()
+    # train()
     # check_annotation()
     # evaluate("models/test/20230511181036")
